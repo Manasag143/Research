@@ -1,0 +1,66 @@
+Task:
+Report on the best chunking strategy for our usecase
+Report on the best retrieval strategy for our usecase
+Evaluation/Accuracy metrics for Retrieval
+ 
+ You are a Credit Analyst; your task is to summarize the information related to the company {company_name} for the header “About the company” or "Company Overview" in 110 words.
+Brief about the business of the rated entity with incorporation year.
+1. Type of products/services offered by them, and geographies they serve in.
+2. Add Quantitative relevant operational information, such as capacity, based on the industry of the business. Keep note not to include any financial information.
+3. History of the entity including present ownership structure.
+4. Do not comment on financial policies and business related information.
+[Instructions]
+1. Ensure that all relevant information is captured without any omissions.
+2. Do not include any points related to sustainability.
+3. Present the summary in a clear and concise paragraph format.
+4. Maintain a neutral tone and refrain from commenting on the information presented.
+5. Exclude any information related to financial numbers and ratios.
+6. Include only factual details about the company.
+7. Do not talk about listing on stock market.
+8. Exclude any information related to credit ratings, credit scores, or other evaluative metrics.
+9. Do not include a concluding sentence that summarizes the summary, such as one starting with "Overall"
+
+
+
+
+
+def build_chroma_vectorstore(chunks: List[Document]):
+    api_token = "ae3ed1"
+    embedding = CLLMGateway(api_type="embedding", base_url="https://llmgateway.crisil.local/api/", api_version="v1",
+                            provider="tgi", deployment="bge-m3", spec_version=1,
+                            max_tokens=2000, api_token=api_token, tls_verify=False).load_client()
+    vectordb = Chroma.from_documents(documents=chunks, embedding=embedding)
+    return vectordb
+
+def rag_chain(vectordb: Chroma, chunks:List[Document], retriever_prompt, query):
+
+    llm = CLLM_PERPLEXITY(endpoint=PERPLEXITY_ENDPOINT)
+
+    retriever: VectorStoreRetriever = vectordb.as_retriever(search_type="mmr",search_kwargs={"k":10})
+    bm25_retriever = BM25Retriever.from_documents(chunks)
+    bm25_retriever.k = 5
+
+    hybrid_retriever = MergerRetriever(retrievers=[retriever, bm25_retriever])
+    # Separate retriever and generator (LLM)
+    # Use retriever to fetch relevant documents, then pass to LLM with a prompt
+    def qa(query, retriever_prompt=None):
+        # Use retriever_prompt if provided, else use query directly
+        retrieval_query = retriever_prompt if retriever_prompt is not None else query
+        retrieved_docs = hybrid_retriever.get_relevant_documents(retrieval_query)
+        # Prepare context for LLM
+        context = "\n".join([doc.page_content for doc in retrieved_docs])
+        # Use llm_prompt if provided, else use query directly
+        prompt = query.format(context=context, query=query) if query else f"{context}\n\n{query}"
+        result = llm._call(prompt)
+        return {"response": result, "source_documents": retrieved_docs}
+
+    return qa(query, retriever_prompt)
+
+def run_rag(pdf_path:str, retriever_prompt, query):
+    docs = load_pdf(pdf_path)
+    chunks = token_split(docs)
+    vectordb = build_chroma_vectorstore(chunks)
+    rag_builder = rag_chain(vectordb, chunks, retriever_prompt, query)
+
+    return rag_builder
+ 
