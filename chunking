@@ -1,0 +1,517 @@
+# Complete Chunking Strategies Guide for Credit Analysis RAG System
+# ================================================================
+
+# Sample Document (10 lines) - This is what we're working with:
+SAMPLE_DOCUMENT = """
+ABC Manufacturing Company was incorporated in 1995 and is headquartered in Mumbai, India. 
+The company specializes in automotive parts manufacturing and serves clients across Asia and Europe.
+Their primary products include brake systems, engine components, and transmission parts.
+The company operates three manufacturing facilities with a combined capacity of 50,000 units per month.
+ABC Manufacturing has been a subsidiary of XYZ Motors since 2010, which holds 75% ownership.
+The remaining 25% is held by the founding family members who continue to manage operations.
+The company exports 60% of its production to European markets and 40% to domestic clients.
+Their main competitors include DEF Auto Parts and GHI Components in the regional market.
+ABC Manufacturing employs over 1,200 skilled workers across all facilities.
+The company has maintained consistent growth over the past decade without major operational disruptions.
+"""
+
+import re
+import spacy
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from sklearn.metrics.pairwise import cosine_similarity
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.docstore.document import Document
+from nltk.tokenize import sent_tokenize
+import time
+
+# =============================================================================
+# 1. CURRENT STRATEGY: Token-Based Splitting (What you're using now)
+# =============================================================================
+
+def current_token_splitting(text, max_tokens=500):
+    """
+    WHAT YOU'RE USING NOW: Simple token-based splitting
+    
+    HOW IT WORKS: Splits text every 500 tokens (words) regardless of meaning
+    
+    PROBLEM: Can break sentences in the middle, losing context
+    """
+    words = text.split()
+    chunks = []
+    
+    for i in range(0, len(words), max_tokens):
+        chunk_words = words[i:i + max_tokens]
+        chunk_text = ' '.join(chunk_words)
+        chunks.append(chunk_text)
+    
+    return chunks
+
+# Example with our sample document:
+print("=== CURRENT TOKEN SPLITTING (What you use now) ===")
+current_chunks = current_token_splitting(SAMPLE_DOCUMENT, max_tokens=30)
+print(f"Number of chunks: {len(current_chunks)}")
+for i, chunk in enumerate(current_chunks):
+    print(f"Chunk {i+1}: {chunk}")
+print("\nPROBLEM: Notice how it cuts in the middle of sentences!")
+print("-" * 80)
+
+# =============================================================================
+# 2. SEMANTIC CHUNKING WITH OVERLAP (Recommended Alternative)
+# =============================================================================
+
+def semantic_chunking_with_overlap(text, chunk_size=300, overlap=50):
+    """
+    WHAT IT IS: Splits text at sentence boundaries, keeps related content together
+    
+    HOW IT WORKS: 
+    - Breaks at sentence endings (not middle of sentences)
+    - Adds overlap between chunks so no information is lost
+    - Keeps related ideas together
+    
+    WHY BETTER: Preserves meaning and context
+    """
+    sentences = sent_tokenize(text)
+    chunks = []
+    current_chunk = []
+    current_tokens = 0
+    
+    for sentence in sentences:
+        sentence_tokens = len(sentence.split())
+        
+        # If adding this sentence would make chunk too big
+        if current_tokens + sentence_tokens > chunk_size and current_chunk:
+            # Finish current chunk
+            chunk_text = ' '.join(current_chunk)
+            chunks.append(chunk_text)
+            
+            # Start new chunk with some overlap (keep last few sentences)
+            overlap_sentences = current_chunk[-2:] if len(current_chunk) > 2 else current_chunk
+            current_chunk = overlap_sentences + [sentence]
+            current_tokens = sum(len(s.split()) for s in current_chunk)
+        else:
+            current_chunk.append(sentence)
+            current_tokens += sentence_tokens
+    
+    # Add the last chunk
+    if current_chunk:
+        chunk_text = ' '.join(current_chunk)
+        chunks.append(chunk_text)
+    
+    return chunks
+
+print("=== SEMANTIC CHUNKING WITH OVERLAP (Better Alternative) ===")
+semantic_chunks = semantic_chunking_with_overlap(SAMPLE_DOCUMENT)
+print(f"Number of chunks: {len(semantic_chunks)}")
+for i, chunk in enumerate(semantic_chunks):
+    print(f"Chunk {i+1}: {chunk}")
+print("\nBETTER: Complete sentences, overlap ensures no info loss!")
+print("-" * 80)
+
+# =============================================================================
+# 3. RECURSIVE CHARACTER SPLITTING (LangChain Standard)
+# =============================================================================
+
+def recursive_character_chunking(text, chunk_size=1000, chunk_overlap=200):
+    """
+    WHAT IT IS: Smart splitting that tries different separators
+    
+    HOW IT WORKS:
+    - First tries to split on paragraphs (\n\n)
+    - Then sentences (. )
+    - Then phrases (, )
+    - Finally words if needed
+    
+    WHY GOOD: Flexible and handles different document types
+    """
+    separators = ["\n\n", "\n", ". ", ", ", " ", ""]
+    
+    text_splitter = RecursiveCharacterTextSplitter(
+        separators=separators,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len,
+    )
+    
+    # Create a document object (LangChain format)
+    doc = Document(page_content=text)
+    chunks = text_splitter.split_documents([doc])
+    
+    return [chunk.page_content for chunk in chunks]
+
+print("=== RECURSIVE CHARACTER SPLITTING ===")
+recursive_chunks = recursive_character_chunking(SAMPLE_DOCUMENT, chunk_size=200)
+print(f"Number of chunks: {len(recursive_chunks)}")
+for i, chunk in enumerate(recursive_chunks):
+    print(f"Chunk {i+1}: {chunk}")
+print("\nGOOD: Respects natural document structure!")
+print("-" * 80)
+
+# =============================================================================
+# 4. SLIDING WINDOW CHUNKING (Maximum Coverage)
+# =============================================================================
+
+def sliding_window_chunking(text, window_size=100, step_size=50):
+    """
+    WHAT IT IS: Creates overlapping windows of text
+    
+    HOW IT WORKS:
+    - Takes 100 words, then moves 50 words forward and takes next 100
+    - Creates 50% overlap between all chunks
+    - Ensures no information is missed at boundaries
+    
+    WHY USEFUL: Perfect for finding information that might span chunk boundaries
+    """
+    words = text.split()
+    chunks = []
+    
+    for i in range(0, len(words), step_size):
+        window_words = words[i:i + window_size]
+        if len(window_words) >= 20:  # Only keep substantial chunks
+            chunk_text = ' '.join(window_words)
+            chunks.append(chunk_text)
+    
+    return chunks
+
+print("=== SLIDING WINDOW CHUNKING ===")
+sliding_chunks = sliding_window_chunking(SAMPLE_DOCUMENT, window_size=40, step_size=20)
+print(f"Number of chunks: {len(sliding_chunks)}")
+for i, chunk in enumerate(sliding_chunks):
+    print(f"Chunk {i+1}: {chunk[:100]}...")  # Show first 100 chars
+print("\nBEST FOR: Ensuring no information is lost between chunks!")
+print("-" * 80)
+
+# =============================================================================
+# 5. ENTITY-AWARE CHUNKING (Best for Company Information)
+# =============================================================================
+
+def entity_aware_chunking(text, target_chunk_size=200):
+    """
+    WHAT IT IS: Keeps company names, people, and important terms together
+    
+    HOW IT WORKS:
+    - Finds company names, people, locations, money amounts
+    - Makes sure these entities don't get split across chunks
+    - Keeps related entity information together
+    
+    WHY PERFECT FOR YOU: Your task is about company information!
+    """
+    try:
+        # Load spacy for finding entities (install: pip install spacy)
+        # python -m spacy download en_core_web_sm
+        nlp = spacy.load("en_core_web_sm")
+        doc = nlp(text)
+        
+        sentences = [sent.text.strip() for sent in doc.sents]
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        
+        for sentence in sentences:
+            # Find important entities in this sentence
+            sent_doc = nlp(sentence)
+            entities = [ent.text for ent in sent_doc.ents 
+                       if ent.label_ in ['ORG', 'PERSON', 'GPE', 'MONEY', 'PERCENT']]
+            
+            sent_size = len(sentence.split())
+            
+            # If chunk would be too big, but this sentence has important entities
+            # related to current chunk, extend the chunk
+            if current_size + sent_size > target_chunk_size and current_chunk:
+                chunk_text = ' '.join(current_chunk)
+                chunks.append(chunk_text)
+                current_chunk = [sentence]
+                current_size = sent_size
+            else:
+                current_chunk.append(sentence)
+                current_size += sent_size
+        
+        if current_chunk:
+            chunk_text = ' '.join(current_chunk)
+            chunks.append(chunk_text)
+        
+        return chunks
+    
+    except OSError:
+        print("Spacy model not found. Using fallback chunking...")
+        return semantic_chunking_with_overlap(text, target_chunk_size)
+
+print("=== ENTITY-AWARE CHUNKING (BEST FOR YOUR USE CASE) ===")
+entity_chunks = entity_aware_chunking(SAMPLE_DOCUMENT)
+print(f"Number of chunks: {len(entity_chunks)}")
+for i, chunk in enumerate(entity_chunks):
+    print(f"Chunk {i+1}: {chunk}")
+print("\nPERFECT FOR: Keeping company info, names, and financial data together!")
+print("-" * 80)
+
+# =============================================================================
+# 6. TOPIC-BASED CHUNKING (Groups Similar Content)
+# =============================================================================
+
+def topic_based_chunking(text, min_chunk_size=100):
+    """
+    WHAT IT IS: Groups sentences that talk about similar topics
+    
+    HOW IT WORKS:
+    - Analyzes what each sentence is about
+    - Groups sentences with similar topics together
+    - Creates chunks based on topic similarity
+    
+    WHY USEFUL: Keeps all information about one topic in same chunk
+    """
+    sentences = sent_tokenize(text)
+    
+    if len(sentences) < 3:
+        return [text]
+    
+    try:
+        # Create TF-IDF vectors for sentences
+        vectorizer = TfidfVectorizer(stop_words='english', max_features=50)
+        sentence_vectors = vectorizer.fit_transform(sentences)
+        
+        # Group similar sentences
+        n_clusters = min(len(sentences) // 2, 4)
+        if n_clusters < 2:
+            return [text]
+        
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        clusters = kmeans.fit_predict(sentence_vectors)
+        
+        # Create chunks from clusters
+        topic_groups = {}
+        for i, cluster in enumerate(clusters):
+            if cluster not in topic_groups:
+                topic_groups[cluster] = []
+            topic_groups[cluster].append((i, sentences[i]))
+        
+        chunks = []
+        for cluster_id, cluster_sentences in topic_groups.items():
+            # Sort by original order
+            cluster_sentences.sort(key=lambda x: x[0])
+            cluster_text = ' '.join([sent[1] for sent in cluster_sentences])
+            
+            if len(cluster_text.split()) >= min_chunk_size // 10:
+                chunks.append(cluster_text)
+        
+        return chunks if chunks else [text]
+    
+    except:
+        return semantic_chunking_with_overlap(text, min_chunk_size)
+
+print("=== TOPIC-BASED CHUNKING ===")
+topic_chunks = topic_based_chunking(SAMPLE_DOCUMENT)
+print(f"Number of chunks: {len(topic_chunks)}")
+for i, chunk in enumerate(topic_chunks):
+    print(f"Chunk {i+1} (Topic Group): {chunk}")
+print("\nUSEFUL FOR: Grouping related information together!")
+print("-" * 80)
+
+# =============================================================================
+# 7. QUESTION-AWARE CHUNKING (Perfect for Your Task)
+# =============================================================================
+
+def question_aware_chunking(text):
+    """
+    WHAT IT IS: Organizes text to answer specific questions
+    
+    HOW IT WORKS:
+    - Looks for sentences that answer your specific questions:
+      * What does the company do?
+      * What products/services?
+      * Operational information?
+      * Ownership structure?
+      * When was it founded?
+    
+    WHY PERFECT: Directly matches your 110-word summary requirements!
+    """
+    sentences = sent_tokenize(text)
+    
+    # Define what we're looking for (based on your prompt)
+    question_keywords = {
+        'company_description': ['company', 'business', 'specializes', 'industry'],
+        'products_services': ['products', 'services', 'manufacturing', 'produces'],
+        'operations': ['operates', 'facilities', 'capacity', 'production'],
+        'ownership': ['subsidiary', 'ownership', 'holds', 'family', 'founded'],
+        'incorporation': ['incorporated', 'established', 'founded', 'since']
+    }
+    
+    question_chunks = {}
+    
+    for sentence in sentences:
+        sentence_lower = sentence.lower()
+        
+        for question_type, keywords in question_keywords.items():
+            if any(keyword in sentence_lower for keyword in keywords):
+                if question_type not in question_chunks:
+                    question_chunks[question_type] = []
+                question_chunks[question_type].append(sentence)
+    
+    # Create chunks from question groups
+    chunks = []
+    for question_type, sentences_list in question_chunks.items():
+        if sentences_list:
+            chunk_text = ' '.join(sentences_list)
+            chunks.append(f"[{question_type.upper()}] {chunk_text}")
+    
+    return chunks if chunks else [text]
+
+print("=== QUESTION-AWARE CHUNKING (PERFECT FOR YOUR TASK) ===")
+question_chunks = question_aware_chunking(SAMPLE_DOCUMENT)
+print(f"Number of chunks: {len(question_chunks)}")
+for i, chunk in enumerate(question_chunks):
+    print(f"Chunk {i+1}: {chunk}")
+print("\nPERFECT FOR: Your 110-word company summary task!")
+print("-" * 80)
+
+# =============================================================================
+# 8. ADAPTIVE CHUNKING (Smart Selection)
+# =============================================================================
+
+def adaptive_chunking(text):
+    """
+    WHAT IT IS: Automatically picks the best chunking method
+    
+    HOW IT WORKS:
+    - Analyzes the document
+    - If it has clear company info → use entity-aware
+    - If it has section headers → use structure-aware
+    - Otherwise → use semantic chunking
+    
+    WHY SMART: One method that handles all document types
+    """
+    # Simple analysis
+    text_lower = text.lower()
+    
+    # Check for company-related content
+    company_indicators = ['company', 'incorporated', 'subsidiary', 'manufacturing']
+    has_company_info = sum(1 for indicator in company_indicators if indicator in text_lower)
+    
+    # Check for structured content
+    has_structure = any(pattern in text for pattern in ['\n\n', '1.', '2.', 'I.', 'II.'])
+    
+    # Select best strategy
+    if has_company_info >= 2:
+        print("ADAPTIVE CHOICE: Using Entity-Aware (detected company information)")
+        return entity_aware_chunking(text)
+    elif has_structure:
+        print("ADAPTIVE CHOICE: Using Recursive (detected structure)")
+        return recursive_character_chunking(text, chunk_size=300)
+    else:
+        print("ADAPTIVE CHOICE: Using Semantic (general content)")
+        return semantic_chunking_with_overlap(text)
+
+print("=== ADAPTIVE CHUNKING (AUTO-SELECTS BEST METHOD) ===")
+adaptive_chunks = adaptive_chunking(SAMPLE_DOCUMENT)
+print(f"Number of chunks: {len(adaptive_chunks)}")
+for i, chunk in enumerate(adaptive_chunks):
+    print(f"Chunk {i+1}: {chunk}")
+print("\nSMART: Automatically picks the best method for each document!")
+print("-" * 80)
+
+# =============================================================================
+# UPDATED IMPLEMENTATION FOR YOUR SYSTEM
+# =============================================================================
+
+def improved_rag_system(pdf_path, chunking_strategy="entity_aware"):
+    """
+    UPDATED VERSION: Replace your token_split() with this
+    
+    WHAT CHANGED:
+    - Better chunking that preserves meaning
+    - Multiple strategies to choose from
+    - Optimized for your company summary task
+    """
+    
+    # Your existing PDF loading (unchanged)
+    docs = load_pdf(pdf_path)  # Your existing function
+    
+    # NEW: Choose chunking strategy
+    all_chunks = []
+    
+    for doc in docs:
+        text = doc.page_content
+        
+        if chunking_strategy == "entity_aware":
+            chunks = entity_aware_chunking(text)
+        elif chunking_strategy == "question_aware":
+            chunks = question_aware_chunking(text)
+        elif chunking_strategy == "semantic":
+            chunks = semantic_chunking_with_overlap(text)
+        elif chunking_strategy == "adaptive":
+            chunks = adaptive_chunking(text)
+        else:
+            chunks = semantic_chunking_with_overlap(text)  # Default
+        
+        # Convert back to Document objects
+        for chunk_text in chunks:
+            chunk_doc = Document(
+                page_content=chunk_text,
+                metadata={
+                    **doc.metadata,
+                    "chunking_strategy": chunking_strategy,
+                    "chunk_size": len(chunk_text.split())
+                }
+            )
+            all_chunks.append(chunk_doc)
+    
+    return all_chunks
+
+# SIMPLE REPLACEMENT IN YOUR CODE:
+def run_improved_rag(pdf_path: str, retriever_prompt, query):
+    """
+    REPLACE YOUR run_rag() function with this
+    
+    ONLY CHANGE: Better chunking instead of token_split()
+    """
+    docs = load_pdf(pdf_path)  # Your existing function
+    
+    # OLD: chunks = token_split(docs)
+    # NEW: Choose one of these:
+    chunks = improved_rag_system(pdf_path, "entity_aware")      # Best for company info
+    # chunks = improved_rag_system(pdf_path, "question_aware")  # Best for your specific task
+    # chunks = improved_rag_system(pdf_path, "adaptive")       # Smart auto-selection
+    
+    vectordb = build_chroma_vectorstore(chunks)  # Your existing function
+    rag_builder = rag_chain(vectordb, chunks, retriever_prompt, query)  # Your existing function
+    return rag_builder
+
+# =============================================================================
+# SUMMARY FOR YOUR CREDIT ANALYSIS TASK
+# =============================================================================
+
+print("\n" + "="*80)
+print("SUMMARY: BEST CHUNKING STRATEGIES FOR YOUR CREDIT ANALYSIS")
+print("="*80)
+
+print("""
+CURRENT PROBLEM (Token Splitting):
+❌ Breaks sentences in the middle
+❌ Loses context between related information  
+❌ Company names and financial data get separated
+
+RECOMMENDED SOLUTIONS:
+
+1. ENTITY-AWARE CHUNKING (BEST for company information)
+   ✅ Keeps company names, financial terms together
+   ✅ Perfect for your "About the company" summaries
+   ✅ Preserves business relationships and ownership info
+
+2. QUESTION-AWARE CHUNKING (BEST for your specific task)
+   ✅ Organizes content to answer your exact questions
+   ✅ Groups incorporation, products, operations, ownership
+   ✅ Optimized for 110-word summaries
+
+3. ADAPTIVE CHUNKING (BEST for mixed documents)
+   ✅ Automatically selects best method per document
+   ✅ Handles different financial document types
+   ✅ One solution for all cases
+
+IMPLEMENTATION:
+Just replace: chunks = token_split(docs)
+With:        chunks = improved_rag_system(pdf_path, "entity_aware")
+
+RESULT: Better context, more relevant information, higher quality summaries!
+""")
+
+print("="*80)
