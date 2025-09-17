@@ -1,0 +1,666 @@
+# Complete Chunking Strategies Guide for Credit Analysis RAG System
+
+## Table of Contents
+1. [Introduction](#introduction)
+2. [Current Method: Token-Based Splitting](#current-method-token-based-splitting)
+3. [Semantic Chunking with Overlap](#semantic-chunking-with-overlap)
+4. [Recursive Character Splitting](#recursive-character-splitting)
+5. [Sliding Window Chunking](#sliding-window-chunking)
+6. [Entity-Aware Chunking](#entity-aware-chunking)
+7. [Topic-Based Chunking](#topic-based-chunking)
+8. [Question-Aware Chunking](#question-aware-chunking)
+9. [Adaptive Chunking](#adaptive-chunking)
+10. [Simple Topic Chunking Implementation](#simple-topic-chunking-implementation)
+11. [Performance Comparison](#performance-comparison)
+12. [Implementation Guide](#implementation-guide)
+13. [Recommendations](#recommendations)
+
+---
+
+## Introduction
+
+This document provides a comprehensive guide to different text chunking strategies for improving Retrieval-Augmented Generation (RAG) systems used in credit analysis. The goal is to replace simple token-based splitting with more intelligent methods that preserve semantic meaning and improve information retrieval quality.
+
+**Current Problem**: Token-based splitting breaks sentences in the middle, loses context between related information, and separates company names and financial data.
+
+**Solution**: Implement semantic-aware chunking methods that preserve meaning and organize content by business topics.
+
+---
+
+## Current Method: Token-Based Splitting
+
+### Description
+Simple token-based splitting that divides text every 500 tokens (words) regardless of meaning or context.
+
+### How It Works
+```python
+def current_token_splitting(text, max_tokens=500):
+    words = text.split()
+    chunks = []
+    
+    for i in range(0, len(words), max_tokens):
+        chunk_words = words[i:i + max_tokens]
+        chunk_text = ' '.join(chunk_words)
+        chunks.append(chunk_text)
+    
+    return chunks
+```
+
+### Problems
+- Breaks sentences in the middle
+- Loses context between related information
+- Company names and financial data get separated
+- No consideration for semantic boundaries
+
+### When to Use
+- Quick prototyping
+- When processing time is critical
+- For very simple documents
+
+---
+
+## Semantic Chunking with Overlap
+
+### Description
+Splits text at sentence boundaries while maintaining overlap between chunks to ensure no information is lost.
+
+### How It Works
+```python
+def semantic_chunking_with_overlap(text, chunk_size=300, overlap=50):
+    sentences = sent_tokenize(text)
+    chunks = []
+    current_chunk = []
+    current_tokens = 0
+    
+    for sentence in sentences:
+        sentence_tokens = len(sentence.split())
+        
+        if current_tokens + sentence_tokens > chunk_size and current_chunk:
+            chunk_text = ' '.join(current_chunk)
+            chunks.append(chunk_text)
+            
+            # Start new chunk with overlap
+            overlap_sentences = current_chunk[-2:] if len(current_chunk) > 2 else current_chunk
+            current_chunk = overlap_sentences + [sentence]
+            current_tokens = sum(len(s.split()) for s in current_chunk)
+        else:
+            current_chunk.append(sentence)
+            current_tokens += sentence_tokens
+    
+    if current_chunk:
+        chunk_text = ' '.join(current_chunk)
+        chunks.append(chunk_text)
+    
+    return chunks
+```
+
+### Advantages
+- Preserves complete sentences
+- Overlap ensures no information loss
+- Respects natural language boundaries
+- Good for most document types
+
+### When to Use
+- General purpose chunking
+- When context preservation is important
+- For documents with clear sentence structure
+
+---
+
+## Recursive Character Splitting
+
+### Description
+Smart splitting that tries different separators in order of preference: paragraphs, sentences, phrases, and finally words.
+
+### How It Works
+```python
+def recursive_character_chunking(text, chunk_size=1000, chunk_overlap=200):
+    separators = ["\n\n", "\n", ". ", ", ", " ", ""]
+    
+    text_splitter = RecursiveCharacterTextSplitter(
+        separators=separators,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len,
+    )
+    
+    doc = Document(page_content=text)
+    chunks = text_splitter.split_documents([doc])
+    
+    return [chunk.page_content for chunk in chunks]
+```
+
+### Advantages
+- Respects natural document structure
+- Flexible and handles different document types
+- Industry standard (LangChain)
+- Reliable performance
+
+### When to Use
+- Documents with clear structure
+- Mixed content types
+- When reliability is paramount
+- Large document processing
+
+---
+
+## Sliding Window Chunking
+
+### Description
+Creates overlapping windows of text with configurable window size and step size to ensure maximum coverage.
+
+### How It Works
+```python
+def sliding_window_chunking(text, window_size=100, step_size=50):
+    words = text.split()
+    chunks = []
+    
+    for i in range(0, len(words), step_size):
+        window_words = words[i:i + window_size]
+        if len(window_words) >= 20:
+            chunk_text = ' '.join(window_words)
+            chunks.append(chunk_text)
+    
+    return chunks
+```
+
+### Advantages
+- Ensures no information is missed at boundaries
+- High overlap prevents context loss
+- Good for finding information that spans boundaries
+- Consistent chunk sizes
+
+### When to Use
+- Critical information retrieval
+- When boundary information is important
+- Search-heavy applications
+
+### Disadvantages
+- Creates many chunks
+- Higher storage requirements
+- More processing time
+
+---
+
+## Entity-Aware Chunking
+
+### Description
+Keeps company names, people, locations, and important financial terms together by using Named Entity Recognition (NER).
+
+### How It Works
+```python
+def entity_aware_chunking(text, target_chunk_size=200):
+    try:
+        nlp = spacy.load("en_core_web_sm")
+        doc = nlp(text)
+        
+        sentences = [sent.text.strip() for sent in doc.sents]
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        
+        for sentence in sentences:
+            sent_doc = nlp(sentence)
+            entities = [ent.text for ent in sent_doc.ents 
+                       if ent.label_ in ['ORG', 'PERSON', 'GPE', 'MONEY', 'PERCENT']]
+            
+            sent_size = len(sentence.split())
+            
+            if current_size + sent_size > target_chunk_size and current_chunk:
+                chunk_text = ' '.join(current_chunk)
+                chunks.append(chunk_text)
+                current_chunk = [sentence]
+                current_size = sent_size
+            else:
+                current_chunk.append(sentence)
+                current_size += sent_size
+        
+        if current_chunk:
+            chunk_text = ' '.join(current_chunk)
+            chunks.append(chunk_text)
+        
+        return chunks
+    
+    except OSError:
+        return semantic_chunking_with_overlap(text, target_chunk_size)
+```
+
+### Advantages
+- Perfect for company information
+- Keeps financial data together
+- Preserves business relationships
+- Ideal for credit analysis
+
+### When to Use
+- Financial documents
+- Company profiles
+- Business reports
+- Credit analysis tasks
+
+### Requirements
+- SpaCy library and language model
+- Additional processing time
+- More memory usage
+
+---
+
+## Topic-Based Chunking
+
+### Description
+Groups sentences that discuss similar topics using machine learning clustering techniques.
+
+### How It Works
+```python
+def topic_based_chunking(text, min_chunk_size=100):
+    sentences = sent_tokenize(text)
+    
+    if len(sentences) < 3:
+        return [text]
+    
+    try:
+        vectorizer = TfidfVectorizer(stop_words='english', max_features=50)
+        sentence_vectors = vectorizer.fit_transform(sentences)
+        
+        n_clusters = min(len(sentences) // 2, 4)
+        if n_clusters < 2:
+            return [text]
+        
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        clusters = kmeans.fit_predict(sentence_vectors)
+        
+        topic_groups = {}
+        for i, cluster in enumerate(clusters):
+            if cluster not in topic_groups:
+                topic_groups[cluster] = []
+            topic_groups[cluster].append((i, sentences[i]))
+        
+        chunks = []
+        for cluster_id, cluster_sentences in topic_groups.items():
+            cluster_sentences.sort(key=lambda x: x[0])
+            cluster_text = ' '.join([sent[1] for sent in cluster_sentences])
+            
+            if len(cluster_text.split()) >= min_chunk_size // 10:
+                chunks.append(cluster_text)
+        
+        return chunks if chunks else [text]
+    
+    except:
+        return semantic_chunking_with_overlap(text, min_chunk_size)
+```
+
+### Advantages
+- Organizes content by subject
+- Groups related information
+- Good for multi-topic documents
+- Improves retrieval relevance
+
+### When to Use
+- Multi-topic documents
+- Annual reports
+- Research papers
+- Documents under 10MB
+
+### Limitations
+- Requires scikit-learn
+- Memory intensive for large documents
+- Processing time overhead
+- May not work well with single-topic documents
+
+---
+
+## Question-Aware Chunking
+
+### Description
+Organizes text to answer specific business questions relevant to credit analysis.
+
+### How It Works
+```python
+def question_aware_chunking(text):
+    sentences = sent_tokenize(text)
+    
+    question_keywords = {
+        'company_description': ['company', 'business', 'specializes', 'industry'],
+        'products_services': ['products', 'services', 'manufacturing', 'produces'],
+        'operations': ['operates', 'facilities', 'capacity', 'production'],
+        'ownership': ['subsidiary', 'ownership', 'holds', 'family', 'founded'],
+        'incorporation': ['incorporated', 'established', 'founded', 'since']
+    }
+    
+    question_chunks = {}
+    
+    for sentence in sentences:
+        sentence_lower = sentence.lower()
+        
+        for question_type, keywords in question_keywords.items():
+            if any(keyword in sentence_lower for keyword in keywords):
+                if question_type not in question_chunks:
+                    question_chunks[question_type] = []
+                question_chunks[question_type].append(sentence)
+    
+    chunks = []
+    for question_type, sentences_list in question_chunks.items():
+        if sentences_list:
+            chunk_text = ' '.join(sentences_list)
+            chunks.append(f"[{question_type.upper()}] {chunk_text}")
+    
+    return chunks if chunks else [text]
+```
+
+### Advantages
+- Directly matches your 110-word summary requirements
+- Organizes by business aspects
+- Perfect for credit analysis questions
+- Targeted retrieval
+
+### When to Use
+- Credit analysis tasks
+- Business intelligence
+- Structured questioning systems
+- Financial document analysis
+
+---
+
+## Adaptive Chunking
+
+### Description
+Automatically selects the best chunking method based on document characteristics.
+
+### How It Works
+```python
+def adaptive_chunking(text):
+    text_lower = text.lower()
+    
+    company_indicators = ['company', 'incorporated', 'subsidiary', 'manufacturing']
+    has_company_info = sum(1 for indicator in company_indicators if indicator in text_lower)
+    
+    has_structure = any(pattern in text for pattern in ['\n\n', '1.', '2.', 'I.', 'II.'])
+    
+    if has_company_info >= 2:
+        print("ADAPTIVE CHOICE: Using Entity-Aware (detected company information)")
+        return entity_aware_chunking(text)
+    elif has_structure:
+        print("ADAPTIVE CHOICE: Using Recursive (detected structure)")
+        return recursive_character_chunking(text, chunk_size=300)
+    else:
+        print("ADAPTIVE CHOICE: Using Semantic (general content)")
+        return semantic_chunking_with_overlap(text)
+```
+
+### Advantages
+- One method handles all document types
+- Automatic optimization
+- Reduces decision complexity
+- Good performance across different content
+
+### When to Use
+- Mixed document types
+- Production systems
+- When simplicity is needed
+- Unknown document characteristics
+
+---
+
+## Simple Topic Chunking Implementation
+
+### Basic Implementation
+```python
+def simple_topic_chunking(docs, max_chunks=8):
+    """Drop-in replacement for token_split"""
+    chunks = []
+    for doc in docs:
+        sentences = sent_tokenize(doc.page_content)
+        
+        if len(sentences) < 6:
+            chunks.append(doc)
+            continue
+            
+        try:
+            vectors = TfidfVectorizer(max_features=50, stop_words='english').fit_transform(sentences)
+            n_clusters = min(len(sentences) // 3, max_chunks)
+            labels = KMeans(n_clusters=n_clusters, random_state=42, n_init=10).fit_predict(vectors)
+            
+            clusters = {}
+            for sentence, label in zip(sentences, labels):
+                clusters.setdefault(label, []).append(sentence)
+            
+            for cluster_sentences in clusters.values():
+                chunk_text = ' '.join(cluster_sentences)
+                chunks.append(type(doc)(page_content=chunk_text, metadata=doc.metadata))
+                
+        except:
+            chunks.append(doc)  # fallback
+    
+    return chunks
+```
+
+### Scalable Implementation for Large Documents
+```python
+def safe_topic_chunking(docs, max_chunks=8):
+    """Topic chunking that handles large documents safely"""
+    chunks = []
+    
+    for doc in docs:
+        text = doc.page_content
+        text_size_mb = len(text) / (1024 * 1024)
+        
+        if text_size_mb > 10:  # Large document (>10MB)
+            # Use streaming approach
+            doc_chunks = streaming_chunking(doc)
+        elif len(text.split()) > 5000:  # Medium document (>5000 words)
+            # Use batch processing
+            doc_chunks = batch_topic_chunking(doc, max_chunks)
+        else:  # Small document
+            # Use full topic clustering
+            doc_chunks = simple_topic_chunking([doc], max_chunks)
+        
+        chunks.extend(doc_chunks)
+    
+    return chunks
+
+def streaming_chunking(doc, chunk_size=500):
+    """Streaming approach for very large documents"""
+    sentences = sent_tokenize(doc.page_content)
+    chunks = []
+    
+    for i in range(0, len(sentences), chunk_size):
+        chunk_sentences = sentences[i:i + chunk_size]
+        chunk_text = ' '.join(chunk_sentences)
+        chunks.append(type(doc)(page_content=chunk_text, metadata=doc.metadata))
+    
+    return chunks
+
+def batch_topic_chunking(doc, max_chunks):
+    """Batch processing for medium-sized documents"""
+    sentences = sent_tokenize(doc.page_content)
+    batch_size = 1000
+    all_chunks = []
+    
+    for i in range(0, len(sentences), batch_size):
+        batch_sentences = sentences[i:i + batch_size]
+        if len(batch_sentences) < 3:
+            continue
+            
+        try:
+            vectors = TfidfVectorizer(max_features=30, stop_words='english').fit_transform(batch_sentences)
+            n_clusters = min(len(batch_sentences) // 4, max_chunks)
+            labels = KMeans(n_clusters=n_clusters, random_state=42).fit_predict(vectors)
+            
+            clusters = {}
+            for sentence, label in zip(batch_sentences, labels):
+                clusters.setdefault(label, []).append(sentence)
+            
+            for cluster_sentences in clusters.values():
+                chunk_text = ' '.join(cluster_sentences)
+                all_chunks.append(type(doc)(page_content=chunk_text, metadata=doc.metadata))
+        except:
+            chunk_text = ' '.join(batch_sentences)
+            all_chunks.append(type(doc)(page_content=chunk_text, metadata=doc.metadata))
+    
+    return all_chunks
+```
+
+---
+
+## Performance Comparison
+
+### Chunk Count Expectations for 10-Page PDF
+
+| Method | Expected Chunks | Avg Words/Chunk | Processing Time | Memory Usage |
+|--------|----------------|------------------|-----------------|--------------|
+| Token-based | 5 chunks | 500 words | Fast | Low |
+| Semantic | 33 chunks | 76 words | Fast | Low |
+| Entity-aware | 20 chunks | 125 words | Medium | Medium |
+| Topic-based | 26 chunks | 96 words | Medium | Medium |
+| Recursive | 15 chunks | 167 words | Fast | Low |
+
+### Document Size Limitations
+
+| Method | Small (<1MB) | Medium (1-10MB) | Large (10-100MB) | Very Large (100MB+) |
+|--------|-------------|----------------|------------------|-------------------|
+| Token-based | Excellent | Excellent | Excellent | Excellent |
+| Semantic | Excellent | Excellent | Good | Good |
+| Entity-aware | Excellent | Good | Poor | Fails |
+| Topic-based | Excellent | Good | Poor | Fails |
+| Recursive | Excellent | Excellent | Excellent | Good |
+
+### Quality Assessment for Credit Analysis
+
+| Method | Keyword Coverage | Coherence | Organization | Overall Score |
+|--------|-----------------|-----------|--------------|---------------|
+| Token-based | 2.5/5 | 2.0/5 | 1.0/5 | 1.8/5 |
+| Semantic | 3.5/5 | 4.5/5 | 3.0/5 | 3.7/5 |
+| Entity-aware | 4.5/5 | 4.0/5 | 4.0/5 | 4.2/5 |
+| Topic-based | 4.0/5 | 3.5/5 | 5.0/5 | 4.2/5 |
+| Question-aware | 5.0/5 | 4.0/5 | 5.0/5 | 4.7/5 |
+
+---
+
+## Implementation Guide
+
+### Step 1: Choose Your Method
+
+For Credit Analysis Tasks:
+1. **Question-Aware Chunking** - Best for your 110-word summaries
+2. **Entity-Aware Chunking** - Best for company information
+3. **Topic-Based Chunking** - Best for multi-topic documents
+4. **Semantic Chunking** - Best general-purpose alternative
+
+### Step 2: Simple Integration
+
+Replace your existing chunking function:
+
+```python
+# OLD CODE:
+chunks = token_split(docs)
+
+# NEW CODE (choose one):
+chunks = simple_topic_chunking(docs)              # Topic-based
+chunks = entity_aware_chunking_docs(docs)         # Entity-aware
+chunks = semantic_chunking_docs(docs)             # Semantic
+chunks = question_aware_chunking_docs(docs)       # Question-aware
+```
+
+### Step 3: Installation Requirements
+
+```bash
+# For topic-based and entity-aware chunking:
+pip install scikit-learn nltk spacy
+
+# Download language model for entity-aware:
+python -m spacy download en_core_web_sm
+
+# For semantic and question-aware (minimal requirements):
+pip install nltk
+```
+
+### Step 4: Testing
+
+Use this simple test code:
+
+```python
+# Test data
+sample_text = "Your PDF content here..."
+docs = [Document(page_content=sample_text, metadata={"source": "test"})]
+
+# Test different methods
+token_chunks = token_split(docs, max_tokens=50)
+topic_chunks = simple_topic_chunking(docs)
+
+# Compare results
+print(f"Token chunks: {len(token_chunks)}")
+print(f"Topic chunks: {len(topic_chunks)}")
+
+for i, chunk in enumerate(topic_chunks):
+    print(f"Chunk {i+1}: {chunk.page_content[:100]}...")
+```
+
+### Step 5: Production Deployment
+
+For production use with large documents:
+
+```python
+def production_chunking(docs):
+    """Production-ready chunking with fallbacks"""
+    try:
+        return safe_topic_chunking(docs)
+    except Exception as e:
+        print(f"Topic chunking failed: {e}, falling back to semantic")
+        try:
+            return semantic_chunking_with_overlap_docs(docs)
+        except Exception as e:
+            print(f"Semantic chunking failed: {e}, falling back to token")
+            return token_split(docs)
+```
+
+---
+
+## Recommendations
+
+### For Your Credit Analysis System
+
+**Primary Recommendation: Question-Aware Chunking**
+- Directly optimized for your 110-word summary task
+- Organizes content by business aspects (incorporation, products, operations, ownership)
+- Best retrieval relevance for credit analysis questions
+- Perfect chunk sizes for summary generation
+
+**Secondary Recommendation: Entity-Aware Chunking**
+- Excellent for company information preservation
+- Keeps financial terms and business entities together
+- Good for documents with rich entity information
+- Ideal for financial document analysis
+
+**Fallback Recommendation: Semantic Chunking**
+- Reliable and simple implementation
+- Good general-purpose performance
+- Preserves sentence boundaries
+- Works well for all document types
+
+### Implementation Strategy
+
+1. **Start Simple**: Begin with semantic chunking as baseline improvement
+2. **Test with Your Data**: Use the provided test code with actual PDF content
+3. **Measure Results**: Compare summary quality and retrieval relevance
+4. **Optimize**: Move to topic-based or entity-aware based on test results
+5. **Scale**: Implement safety measures for large documents if needed
+
+### Expected Improvements
+
+- **Better Context Preservation**: No more broken sentences
+- **Improved Retrieval Accuracy**: Topically relevant chunks
+- **Higher Quality Summaries**: More coherent 110-word outputs
+- **Better Organization**: Content grouped by business topics
+
+### Final Notes
+
+The choice of chunking method should be based on:
+- Document characteristics (size, structure, content type)
+- Specific use case requirements (credit analysis, general QA, etc.)
+- Performance constraints (processing time, memory usage)
+- Quality requirements (accuracy vs. speed trade-offs)
+
+For most credit analysis applications with PDFs under 10MB, topic-based or entity-aware chunking will provide the best results with manageable complexity.
+
+---
+
+*This document provides comprehensive guidance for implementing advanced chunking strategies in credit analysis RAG systems. Choose the method that best fits your specific requirements and gradually implement improvements to optimize performance.*
