@@ -1,0 +1,92 @@
+# BLOCK 1: Simple setup
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from nltk.tokenize import sent_tokenize
+import nltk
+nltk.download('punkt', quiet=True)
+
+# BLOCK 2: Your current token chunking
+def token_split(docs, max_tokens=500):
+    """Your current method"""
+    chunks = []
+    for doc in docs:
+        words = doc.page_content.split()
+        for i in range(0, len(words), max_tokens):
+            chunk_words = words[i:i + max_tokens]
+            chunk_text = ' '.join(chunk_words)
+            chunks.append(type(doc)(page_content=chunk_text, metadata=doc.metadata))
+    return chunks
+
+# BLOCK 3: Simple topic chunking replacement
+def topic_chunking(docs, max_chunks=8):
+    """Drop-in replacement for token_split"""
+    chunks = []
+    for doc in docs:
+        sentences = sent_tokenize(doc.page_content)
+        
+        if len(sentences) < 6:
+            chunks.append(doc)
+            continue
+            
+        try:
+            vectors = TfidfVectorizer(max_features=50, stop_words='english').fit_transform(sentences)
+            n_clusters = min(len(sentences) // 3, max_chunks)
+            labels = KMeans(n_clusters=n_clusters, random_state=42, n_init=10).fit_predict(vectors)
+            
+            clusters = {}
+            for sentence, label in zip(sentences, labels):
+                clusters.setdefault(label, []).append(sentence)
+            
+            for cluster_sentences in clusters.values():
+                chunk_text = ' '.join(cluster_sentences)
+                chunks.append(type(doc)(page_content=chunk_text, metadata=doc.metadata))
+                
+        except:
+            chunks.append(doc)  # fallback
+    
+    return chunks
+
+# BLOCK 4: Test with sample data
+class TestDoc:
+    def __init__(self, page_content, metadata=None):
+        self.page_content = page_content
+        self.metadata = metadata or {}
+
+sample_text = """
+ABC Manufacturing Company was incorporated in 1995 and is headquartered in Mumbai, India. 
+The company specializes in automotive parts manufacturing and serves clients across Asia and Europe.
+Their primary products include brake systems, engine components, and transmission parts.
+The company operates three manufacturing facilities with a combined capacity of 50,000 units per month.
+ABC Manufacturing has been a subsidiary of XYZ Motors since 2010, which holds 75% ownership.
+The remaining 25% is held by the founding family members who continue to manage operations.
+The company exports 60% of its production to European markets and 40% to domestic clients.
+Their main competitors include DEF Auto Parts and GHI Components in the regional market.
+ABC Manufacturing employs over 1,200 skilled workers across all facilities.
+The company has maintained consistent growth over the past decade without major operational disruptions.
+"""
+
+docs = [TestDoc(sample_text, {"source": "test_company"})]
+
+# BLOCK 5: Test both methods
+print("=== CURRENT TOKEN CHUNKING ===")
+token_chunks = token_split(docs, max_tokens=50)
+print(f"Created {len(token_chunks)} chunks")
+for i, chunk in enumerate(token_chunks):
+    print(f"Chunk {i+1}: {chunk.page_content}")
+
+print("\n=== NEW TOPIC CHUNKING ===")
+topic_chunks = topic_chunking(docs)
+print(f"Created {len(topic_chunks)} chunks")
+for i, chunk in enumerate(topic_chunks):
+    print(f"Chunk {i+1}: {chunk.page_content}")
+
+# BLOCK 6: Compare results
+print(f"\n=== COMPARISON ===")
+print(f"Token chunks: {len(token_chunks)}")
+print(f"Topic chunks: {len(topic_chunks)}")
+print(f"Avg words per token chunk: {sum(len(c.page_content.split()) for c in token_chunks) / len(token_chunks):.1f}")
+print(f"Avg words per topic chunk: {sum(len(c.page_content.split()) for c in topic_chunks) / len(topic_chunks):.1f}")
+
+# BLOCK 7: Use in your system (just replace this line)
+# OLD: chunks = token_split(docs)
+# NEW: chunks = topic_chunking(docs)
