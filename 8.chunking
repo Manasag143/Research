@@ -1,0 +1,45 @@
+
+# =============================================================================
+# 8. Simple topic chunking replacement
+# =============================================================================
+def topic_chunking(docs, max_chunks=8):
+    """Drop-in replacement for token_split"""
+    chunks = []
+    for doc in docs:
+        sentences = sent_tokenize(doc.page_content)
+        
+        if len(sentences) < 6:
+            chunks.append(doc)
+            continue
+            
+        try:
+            vectors = TfidfVectorizer(max_features=50, stop_words='english').fit_transform(sentences)
+            n_clusters = min(len(sentences) // 3, max_chunks)
+            labels = KMeans(n_clusters=n_clusters, random_state=42, n_init=10).fit_predict(vectors)
+            
+            clusters = {}
+            for sentence, label in zip(sentences, labels):
+                clusters.setdefault(label, []).append(sentence)
+            
+            for cluster_sentences in clusters.values():
+                chunk_text = ' '.join(cluster_sentences)
+                chunks.append(type(doc)(page_content=chunk_text, metadata=doc.metadata))
+                
+        except:
+            chunks.append(doc)  # fallback
+    
+    return chunks
+
+class TestDoc:
+    def __init__(self, page_content, metadata=None):
+        self.page_content = page_content
+        self.metadata = metadata or {}
+
+docs = [TestDoc(SAMPLE_DOCUMENT, {"source": "test_company"})]
+
+print("\n=== NEW TOPIC CHUNKING ===")
+topic_chunks = topic_chunking(docs)
+print(f"Created {len(topic_chunks)} chunks")
+for i, chunk in enumerate(topic_chunks):
+    print(f"Chunk {i+1}: {chunk.page_content}")
+
