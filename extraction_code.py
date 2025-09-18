@@ -5,11 +5,11 @@ import os
 
 def extract_contingent_liabilities_tables(pdf_path):
     """
-    Extract contingent liabilities tables from PDF pages 176 and 214
+    Extract contingent liabilities tables from PDF - reads continuously across pages until total is found
     """
     
-    # Page mappings
-    pages_to_extract = {
+    # Starting page mappings
+    start_pages = {
         'consolidated_page': 176,  # Contains logical page 346
         'standalone_page': 214     # Contains logical page 423
     }
@@ -28,107 +28,106 @@ def extract_contingent_liabilities_tables(pdf_path):
         print(f"Error opening PDF: {e}")
         return {}
     
-    # Check pages exist
-    valid_pages = {}
-    for section_name, page_num in pages_to_extract.items():
-        if page_num <= total_pages:
-            valid_pages[section_name] = page_num
-        else:
-            print(f"Page {page_num} doesn't exist")
-    
-    if not valid_pages:
-        return {}
-    
     results = {}
     
-    for section_name, page_num in valid_pages.items():
-        print(f"Processing {section_name.replace('_', ' ')} (Page {page_num})...")
+    for section_name, start_page in start_pages.items():
+        print(f"Processing {section_name.replace('_', ' ')} starting from page {start_page}...")
         
         section_results = {
             'logical_page': logical_pages[section_name],
-            'physical_page': page_num,
+            'physical_page': start_page,
             'text_found': '',
             'tables': []
         }
         
         try:
-            # Extract text from left and right columns separately
+            # Determine target section
+            if 'consolidated' in section_name:
+                target_heading = "notes to consolidated financial statement"
+            else:
+                target_heading = "notes to standalone financial statement"
+            
+            # Start continuous reading from the starting page
+            all_extracted_text = ""
+            found_start = False
+            found_total = False
+            current_page = start_page
+            
             with pdfplumber.open(pdf_path) as pdf:
-                page = pdf.pages[page_num - 1]
                 
-                # Split page into left/right halves
-                page_width = page.width
-                half_width = page_width / 2
-                
-                left_text = page.within_bbox((0, 0, half_width, page.height)).extract_text() or ""
-                right_text = page.within_bbox((half_width, 0, page_width, page.height)).extract_text() or ""
-                
-                # Determine target section
-                if 'consolidated' in section_name:
-                    target_heading = "notes to consolidated financial statement"
-                else:
-                    target_heading = "notes to standalone financial statement"
-                
-                # Find which column contains our section
-                relevant_text = ""
-                left_lower = left_text.lower()
-                right_lower = right_text.lower()
-                
-                if target_heading in left_lower and "contingent liabilit" in left_lower:
-                    relevant_text = left_text
-                elif target_heading in right_lower and "contingent liabilit" in right_lower:
-                    relevant_text = right_text
-                elif "contingent liabilit" in left_lower:
-                    relevant_text = left_text
-                elif "contingent liabilit" in right_lower:
-                    relevant_text = right_text
-                
-                if relevant_text:
-                    # Find contingent liabilities section
-                    text_lower = relevant_text.lower()
-                    patterns = [r'b\)\s*contingent\s+liabilit[ieysn]*', r'contingent\s+liabilit[ieysn]*']
+                while current_page <= total_pages and not found_total:
+                    print(f"  Reading page {current_page}...")
                     
-                    for pattern in patterns:
-                        match = re.search(pattern, text_lower)
-                        if match:
-                            start = match.start()
+                    page = pdf.pages[current_page - 1]
+                    page_width = page.width
+                    half_width = page_width / 2
+                    
+                    # Read left column first, then right column
+                    columns = [
+                        ("LEFT", page.within_bbox((0, 0, half_width, page.height))),
+                        ("RIGHT", page.within_bbox((half_width, 0, page_width, page.height)))
+                    ]
+                    
+                    for column_name, column_area in columns:
+                        if found_total:
+                            break
                             
-                            # Find section end - look for next section OR total line
-                            end_patterns = [
-                                r'\bc\)\s*', 
-                                r'\bd\)\s*', 
-                                r'\n\s*\d+\.\s*',
-                                r'\n.*?(?:total|grand total).*?(?:\d|₹|rs\.)',  # Total lines
-                            ]
-                            search_start = match.end() + 50
-                            end = len(relevant_text)
+                        column_text = column_area.extract_text() or ""
+                        if not column_text:
+                            continue
+                        
+                        column_lower = column_text.lower()
+                        
+                        # If we haven't found the start yet, look for it
+                        if not found_start:
+                            if (target_heading in column_lower and "contingent liabilit" in column_lower):
+                                print(f"    ✓ Found section start in page {current_page} {column_name} column")
+                                found_start = True
+                                
+                                # Find the contingent liabilities section start
+                                patterns = [r'b\)\s*contingent\s+liabilit[ieysn]*', r'contingent\s+liabilit[ieysn]*']
+                                start_pos = 0
+                                
+                                for pattern in patterns:
+                                    match = re.search(pattern, column_lower)
+                                    if match:
+                                        start_pos = match.start()
+                                        break
+                                
+                                column_text = column_text[start_pos:]
+                        
+                        # If we found the start, continue collecting text
+                        if found_start:
+                            # Check each line for total/grand total
+                            lines = column_text.split('\n')
                             
-                            # Look through the text to find where to stop
-                            section_text = relevant_text[start:]
-                            lines = section_text.split('\n')
-                            
-                            final_text_lines = []
                             for line in lines:
-                                final_text_lines.append(line)
+                                all_extracted_text += line + '\n'
                                 
                                 # Check if this line contains total/grand total with amounts
                                 line_lower = line.lower().strip()
                                 if (('total' in line_lower or 'grand total' in line_lower) and 
                                     (any(c.isdigit() for c in line) or '₹' in line or 'rs.' in line_lower or 
                                      'crore' in line_lower or 'lakh' in line_lower)):
-                                    print(f"  ✓ Stopping at total line: {line.strip()}")
+                                    print(f"    ✓ Found total line in page {current_page} {column_name}: {line.strip()}")
+                                    found_total = True
                                     break
-                            
-                            section_results['text_found'] = '\n'.join(final_text_lines).strip()
-                            break
                     
-                    if not section_results['text_found']:
-                        section_results['text_found'] = relevant_text
+                    # Move to next page if total not found
+                    if not found_total:
+                        current_page += 1
                 
+                if found_start:
+                    section_results['text_found'] = all_extracted_text.strip()
+                    print(f"  ✓ Extracted text from pages {start_page} to {current_page}")
+                    print(f"  ✓ Total characters: {len(section_results['text_found'])}")
+                else:
+                    print(f"  ✗ Section not found starting from page {start_page}")
+            
             results[section_name] = section_results
             
         except Exception as e:
-            print(f"Failed to process page {page_num}: {e}")
+            print(f"Failed to process section {section_name}: {e}")
             results[section_name] = section_results
     
     return results
