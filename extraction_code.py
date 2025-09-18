@@ -93,18 +93,33 @@ def extract_contingent_liabilities_tables(pdf_path):
                         if match:
                             start = match.start()
                             
-                            # Find section end
-                            end_patterns = [r'\bc\)\s*', r'\bd\)\s*', r'\n\s*\d+\.\s*']
+                            # Find section end - look for next section OR total line
+                            end_patterns = [
+                                r'\bc\)\s*', 
+                                r'\bd\)\s*', 
+                                r'\n\s*\d+\.\s*',
+                                r'\n.*?(?:total|grand total).*?(?:\d|₹|rs\.)',  # Total lines
+                            ]
                             search_start = match.end() + 50
                             end = len(relevant_text)
                             
-                            for end_pattern in end_patterns:
-                                end_match = re.search(end_pattern, text_lower[search_start:])
-                                if end_match:
-                                    end = search_start + end_match.start()
+                            # Look through the text to find where to stop
+                            section_text = relevant_text[start:]
+                            lines = section_text.split('\n')
+                            
+                            final_text_lines = []
+                            for line in lines:
+                                final_text_lines.append(line)
+                                
+                                # Check if this line contains total/grand total with amounts
+                                line_lower = line.lower().strip()
+                                if (('total' in line_lower or 'grand total' in line_lower) and 
+                                    (any(c.isdigit() for c in line) or '₹' in line or 'rs.' in line_lower or 
+                                     'crore' in line_lower or 'lakh' in line_lower)):
+                                    print(f"  ✓ Stopping at total line: {line.strip()}")
                                     break
                             
-                            section_results['text_found'] = relevant_text[start:end].strip()
+                            section_results['text_found'] = '\n'.join(final_text_lines).strip()
                             break
                     
                     if not section_results['text_found']:
