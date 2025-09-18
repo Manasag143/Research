@@ -1,8 +1,6 @@
 import pandas as pd
 import pdfplumber
 import re
-from docx import Document
-from docx.shared import Inches
 import os
 
 def extract_contingent_liabilities_tables(pdf_path):
@@ -101,61 +99,156 @@ def extract_contingent_liabilities_tables(pdf_path):
                     print(f"  ⚠ Contingent liabilities heading not found, using full page")
                     section_results['text_found'] = page_text
             
-            # Step 3: Extract tables using pdfplumber (no Java required)
+            # Step 3: Extract tables from the relevant section
             try:
-                print(f"  Extracting tables using pdfplumber...")
-                with pdfplumber.open(pdf_path) as pdf:
-                    page = pdf.pages[page_num - 1]
-                    page_tables = page.extract_tables()
+                print(f"  Extracting tables from the identified section...")
+                print(f"  Note: Tables have row lines but no column lines - using text-based extraction")
+                
+                # For tables with only row lines (no column lines), text extraction works better
+                text_to_analyze = section_results['text_found']
+                
+                # Method 1: Look for structured financial data in text
+                lines = text_to_analyze.split('\n')
+                potential_table_lines = []
+                
+                print(f"  Analyzing {len(lines)} lines for tabular data...")
+                
+                for line in lines:
+                    line = line.strip()
+                    # Look for lines that are likely table rows:
+                    # - Have financial amounts (₹, Rs., crore, lakh)
+                    # - Have multiple numbers
+                    # - Have consistent spacing patterns
+                    # - Are not too short or too long
+                    if (10 < len(line) < 200 and 
+                        (line.count('₹') >= 1 or 
+                         line.count('Rs.') >= 1 or
+                         'crore' in line.lower() or
+                         'lakh' in line.lower() or
+                         # Lines with multiple numbers (likely amounts)
+                         len([word for word in line.split() if word.replace(',', '').replace('.', '').replace('(', '').replace(')', '').isdigit()]) >= 1)):
+                        
+                        # Additional check: skip lines that are clearly headers or notes
+                        line_lower = line.lower()
+                        if not any(skip_word in line_lower for skip_word in 
+                                 ['note', 'contingent', 'liabilit', 'statement', 'financial', 'as on', 'previous year']):
+                            potential_table_lines.append(line)
+                
+                if potential_table_lines:
+                    print(f"  ✓ Found {len(potential_table_lines)} potential financial data lines")
                     
-                    if page_tables:
-                        for i, table_data in enumerate(page_tables):
-                            if table_data and len(table_data) > 1:  # At least header + 1 row
-                                # Convert to DataFrame
-                                df = pd.DataFrame(table_data[1:], columns=table_data[0])
-                                
-                                # Simple cleaning
-                                df = df.dropna(how='all').dropna(axis=1, how='all')
-                                df = df.fillna('')
-                                
-                                # Remove empty string columns and rows
-                                df = df.loc[:, (df != '').any(axis=0)]  # Remove empty columns
-                                df = df.loc[(df != '').any(axis=1)]     # Remove empty rows
-                                
-                                if not df.empty and df.shape[0] > 0 and df.shape[1] > 1:
-                                    section_results['tables'].append(df)
-                                    print(f"  ✓ Extracted table {i+1}: {df.shape[0]} rows × {df.shape[1]} columns")
+                    # Method 2: Smart column detection for row-only tables
+                    table_data = []
+                    
+                    # Analyze spacing patterns to detect columns
+                    for line in potential_table_lines:
+                        # Try different splitting strategies for tables without column lines:
+                        
+                        # Strategy 1: Split by significant spacing (2+ spaces)
+                        row1 = re.split(r'\s{2,}', line.strip())
+                        
+                        # Strategy 2: Split by currency symbols and numbers
+                        # Keep currency symbols with their numbers
+                        row2 = re.split(r'(?<=\d)\s+(?=[A-Za-z])|(?<=[a-zA-Z])\s+(?=[\d₹])', line.strip())
+                        
+                        # Strategy 3: Split by positions (if there's a consistent pattern)
+                        # Look for patterns like: Description [spaces] Amount [spaces] Amount
+                        row3 = re.findall(r'([^₹\d]*(?:₹[\d,\.]+|[\d,\.]+\s*(?:crore|lakh)?|[\d,\.]+))', line)
+                        
+                        # Choose the best split (usually the one with reasonable number of columns)
+                        best_row = row1
+                        if 2 <= len(row2) <= 6 and len(row2) != len(row1):
+                            best_row = row2
+                        elif 2 <= len(row3) <= 6:
+                            best_row = [item.strip() for item in row3 if item.strip()]
+                        
+                        # Clean up the row
+                        cleaned_row = []
+                        for cell in best_row:
+                            cell = cell.strip()
+                            if cell:  # Only add non-empty cells
+                                cleaned_row.append(cell)
+                        
+                        if len(cleaned_row) >= 2:  # At least description + amount
+                            table_data.append(cleaned_row)
+                    
+                    # Create DataFrame from extracted table data
+                    if table_data:
+                        # Determine maximum number of columns
+                        max_cols = max(len(row) for row in table_data)
+                        
+                        # Pad shorter rows with empty strings
+                        for row in table_data:
+                            while len(row) < max_cols:
+                                row.append('')
+                        
+                        # Create DataFrame with intelligent column names
+                        if max_cols == 2:
+                            col_names = ['Description', 'Amount']
+                        elif max_cols == 3:
+                            col_names = ['Description', 'Current Year', 'Previous Year']
+                        elif max_cols == 4:
+                            col_names = ['Description', 'Current Year', 'Previous Year', 'Notes']
+                        else:
+                            col_names = [f'Column_{i+1}' for i in range(max_cols)]
+                        
+                        df = pd.DataFrame(table_data, columns=col_names)
+                        
+                        # Final cleaning
+                        df = df.replace('', pd.NA).dropna(how='all').fillna('')
+                        
+                        if not df.empty:
+                            section_results['tables'].append(df)
+                            print(f"  ✓ Created table from text analysis: {df.shape[0]} rows × {df.shape[1]} columns")
+                            print(f"  ✓ Column structure: {list(df.columns)}")
+                        else:
+                            print(f"  ⚠ Table data found but became empty after cleaning")
                     else:
-                        print(f"  ⚠ No table structures found on this page")
+                        print(f"  ⚠ Could not structure the data into table format")
+                
+                # Method 3: Also try pdfplumber's table extraction (sometimes works even without column lines)
+                try:
+                    with pdfplumber.open(pdf_path) as pdf:
+                        page = pdf.pages[page_num - 1]
+                        page_width = page.width
+                        half_width = page_width / 2
                         
-                        # Try alternative method - extract text and look for tabular data
-                        text_lines = page_text.split('\n')
-                        potential_table_lines = []
-                        
-                        for line in text_lines:
-                            # Look for lines that might be table rows (contain multiple numbers or currency)
-                            if (len(line.strip()) > 10 and 
-                                (line.count('₹') >= 2 or 
-                                 line.count('Rs.') >= 1 or
-                                 len([word for word in line.split() if word.replace(',', '').replace('.', '').isdigit()]) >= 2)):
-                                potential_table_lines.append(line.strip())
-                        
-                        if potential_table_lines:
-                            print(f"  ✓ Found {len(potential_table_lines)} potential table rows in text")
+                        # Focus on the correct half based on where we found the text
+                        if found_section:
+                            if "LEFT column" in str(locals().get('found_section', '')):
+                                crop_area = (0, 0, half_width, page.height)
+                                print(f"  Trying pdfplumber extraction on LEFT half...")
+                            elif "RIGHT column" in str(locals().get('found_section', '')):
+                                crop_area = (half_width, 0, page_width, page.height)
+                                print(f"  Trying pdfplumber extraction on RIGHT half...")
+                            else:
+                                crop_area = None
+                                print(f"  Trying pdfplumber extraction on full page...")
                             
-                            # Create a simple table from text lines
-                            table_data = []
-                            for line in potential_table_lines[:10]:  # Limit to first 10 lines
-                                # Split by multiple spaces or tabs
-                                row = re.split(r'\s{2,}|\t', line)
-                                if len(row) >= 2:  # At least 2 columns
-                                    table_data.append(row)
+                            if crop_area:
+                                cropped_page = page.within_bbox(crop_area)
+                                page_tables = cropped_page.extract_tables()
+                            else:
+                                page_tables = page.extract_tables()
                             
-                            if table_data:
-                                df = pd.DataFrame(table_data)
-                                df.columns = [f'Column_{i+1}' for i in range(len(df.columns))]
-                                section_results['tables'].append(df)
-                                print(f"  ✓ Created table from text: {df.shape[0]} rows × {df.shape[1]} columns")
+                            if page_tables:
+                                print(f"  ✓ pdfplumber found {len(page_tables)} structured tables")
+                                for i, table_data in enumerate(page_tables):
+                                    if table_data and len(table_data) > 1:
+                                        df = pd.DataFrame(table_data[1:], columns=table_data[0])
+                                        df = df.dropna(how='all').dropna(axis=1, how='all').fillna('')
+                                        
+                                        if not df.empty:
+                                            section_results['tables'].append(df)
+                                            print(f"  ✓ Added pdfplumber table {i+1}: {df.shape}")
+                            else:
+                                print(f"  ⚠ pdfplumber found no structured tables (expected for row-only tables)")
+                        
+                except Exception as e:
+                    print(f"  ⚠ pdfplumber extraction failed: {e}")
+                
+                if not section_results['tables']:
+                    print(f"  ℹ No tables extracted - all financial data will be available in the text section")
                 
             except Exception as e:
                 print(f"  ✗ Table extraction failed: {e}")
@@ -353,7 +446,6 @@ def main():
                 print(f"    Table {i+1}: {table.shape[0]} rows × {table.shape[1]} columns")
         print()
     
-    print("Output file: contingent_liabilities_extracted.docx")
     print("✓ All done!")
 
 # Run the extraction
