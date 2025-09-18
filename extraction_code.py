@@ -6,6 +6,9 @@ import re
 def extract_contingent_liabilities_tables(pdf_path):
     """
     Simple function to extract contingent liabilities tables from PDF
+    Using the correct physical page mappings:
+    - Logical page 346 → Physical page 176
+    - Logical page 423 → Physical page 214
     
     Args:
         pdf_path (str): Path to your PDF file
@@ -14,21 +17,53 @@ def extract_contingent_liabilities_tables(pdf_path):
         dict: Simple results with tables and text
     """
     
-    # Target pages
+    # Correct page mappings as provided
     pages_to_extract = {
+        'consolidated_page': 176,  # Contains logical page 346
+        'standalone_page': 214     # Contains logical page 423
+    }
+    
+    logical_pages = {
         'consolidated_page': 346,
         'standalone_page': 423
     }
+    
+    print(f"Using correct page mappings:")
+    print(f"Logical page 346 → Physical page 176")
+    print(f"Logical page 423 → Physical page 214")
+    
+    # First, check PDF and get total pages
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            total_pages = len(pdf.pages)
+            print(f"PDF opened successfully. Total physical pages: {total_pages}")
+    except Exception as e:
+        print(f"✗ Error opening PDF: {e}")
+        return {}
+    
+    # Validate pages exist
+    valid_pages = {}
+    for section_name, page_num in pages_to_extract.items():
+        if page_num <= total_pages:
+            valid_pages[section_name] = page_num
+            print(f"✓ Will extract {section_name.replace('_', ' ')} from physical page {page_num}")
+        else:
+            print(f"✗ Physical page {page_num} doesn't exist (PDF has {total_pages} pages)")
+    
+    if not valid_pages:
+        print("✗ No valid pages found.")
+        return {}
     
     results = {}
     
     print("Starting extraction...")
     
-    for section_name, page_num in pages_to_extract.items():
-        print(f"\nProcessing {section_name} (Page {page_num})...")
+    for section_name, page_num in valid_pages.items():
+        print(f"\nProcessing {section_name.replace('_', ' ')} (Physical page {page_num})...")
         
         section_results = {
-            'page_number': page_num,
+            'logical_page': logical_pages[section_name],
+            'physical_page': page_num,
             'text_found': '',
             'tables': []
         }
@@ -168,6 +203,56 @@ def save_simple_results(results, output_file="contingent_liabilities_extracted.x
     
     print(f"✓ Results saved successfully!")
 
+def search_for_section(pdf_path, section_type, total_pages):
+    """
+    Search for contingent liabilities sections in the PDF
+    
+    Args:
+        pdf_path (str): Path to PDF
+        section_type (str): 'consolidated' or 'standalone'
+        total_pages (int): Total pages in PDF
+        
+    Returns:
+        int: Page number if found, None otherwise
+    """
+    
+    search_terms = {
+        'consolidated': ['consolidated financial statement', 'consolidated financial statements'],
+        'standalone': ['standalone financial statement', 'standalone financial statements']
+    }
+    
+    print(f"  Searching for {section_type} section...")
+    
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            # Search in reasonable range (avoid searching entire PDF for large files)
+            start_page = max(1, total_pages - 100)  # Search last 100 pages
+            end_page = total_pages
+            
+            for page_num in range(start_page, end_page + 1):
+                try:
+                    page = pdf.pages[page_num - 1]
+                    text = page.extract_text()
+                    if text:
+                        text_lower = text.lower()
+                        
+                        # Check for section type and contingent liabilities
+                        section_found = any(term in text_lower for term in search_terms[section_type])
+                        contingent_found = 'contingent liabilit' in text_lower
+                        
+                        if section_found and contingent_found:
+                            print(f"  ✓ Found {section_type} section on page {page_num}")
+                            return page_num
+                            
+                except Exception as e:
+                    continue  # Skip problematic pages
+                    
+    except Exception as e:
+        print(f"  ✗ Search failed: {e}")
+    
+    print(f"  ✗ {section_type} section not found")
+    return None
+
 def main():
     """
     Simple main function to run everything
@@ -179,11 +264,55 @@ def main():
     print("PDF Contingent Liabilities Extractor")
     print("=" * 40)
     
-    # Extract data
+    # Extract data using the correct physical page numbers
     results = extract_contingent_liabilities_tables(pdf_path)
     
-    # Save to Excel
-    save_simple_results(results)
+    if not results:
+        print("No sections found. Let me help you find the right pages...")
+        
+        # Show some sample pages to help user identify correct pages
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                total_pages = len(pdf.pages)
+                print(f"\nYour PDF has {total_pages} pages.")
+                print("Let me show you some pages that mention 'contingent liabilities':\n")
+                
+                found_pages = []
+                for page_num in range(1, min(total_pages + 1, 50)):  # Check first 50 pages
+                    try:
+                        page = pdf.pages[page_num - 1]
+                        text = page.extract_text()
+                        if text and 'contingent liabilit' in text.lower():
+                            found_pages.append(page_num)
+                            print(f"Page {page_num}: Found 'contingent liabilities'")
+                            # Show first 200 chars to help identify
+                            start_pos = text.lower().find('contingent liabilit')
+                            if start_pos >= 0:
+                                snippet = text[max(0, start_pos-50):start_pos+150]
+                                print(f"  Context: ...{snippet}...")
+                            print()
+                            
+                            if len(found_pages) >= 5:  # Limit output
+                                break
+                    except:
+                        continue
+                
+                if found_pages:
+                    print(f"Found 'contingent liabilities' on pages: {found_pages}")
+                    print("\nTo extract specific pages, modify the code like this:")
+                    print("results = extract_contingent_liabilities_tables(pdf_path,")
+                    print(f"                                               consolidated_page={found_pages[0]},")
+                    if len(found_pages) > 1:
+                        print(f"                                               standalone_page={found_pages[1]})")
+                    else:
+                        print("                                               standalone_page=None)")
+                else:
+                    print("No pages found with 'contingent liabilities'. Please check your PDF.")
+                    
+        except Exception as e:
+            print(f"Error analyzing PDF: {e}")
+        
+        return
     
     # Print simple summary
     print("\n" + "=" * 40)
@@ -193,7 +322,8 @@ def main():
     for section_name, data in results.items():
         section_title = section_name.replace('_', ' ').title()
         print(f"{section_title}:")
-        print(f"  Page: {data['page_number']}")
+        print(f"  Logical page: {data['logical_page']}")
+        print(f"  Physical page: {data['physical_page']}")
         print(f"  Tables found: {len(data['tables'])}")
         print(f"  Text extracted: {len(data['text_found'])} characters")
         
