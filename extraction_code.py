@@ -263,58 +263,100 @@ def extract_contingent_liabilities_tables(pdf_path):
     
     return results
 
-def save_simple_results(results, output_file="contingent_liabilities_extracted.xlsx"):
+def save_results_to_word(results, output_file="contingent_liabilities_extracted.docx"):
     """
-    Save all results to one Excel file with multiple sheets
+    Save all results to a Word document
     
     Args:
         results (dict): Extraction results
-        output_file (str): Output Excel file name
+        output_file (str): Output Word file name
     """
     
-    print(f"\nSaving results to {output_file}...")
-    
-    with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+    try:
+        from docx import Document
+        print(f"\nSaving results to {output_file}...")
         
-        # Create summary sheet
-        summary_data = []
+        # Create a new Word document
+        doc = Document()
+        
+        # Add title
+        title = doc.add_heading('Contingent Liabilities Extraction Results', 0)
+        
+        # Add summary
+        doc.add_heading('Summary', level=1)
+        summary_para = doc.add_paragraph()
+        
         for section_name, data in results.items():
-            summary_data.append({
-                'Section': section_name.replace('_', ' ').title(),
-                'Page Number': data['page_number'],
-                'Text Extracted': 'Yes' if data['text_found'] else 'No',
-                'Number of Tables': len(data['tables']),
-                'Text Length': len(data['text_found'])
-            })
+            section_title = section_name.replace('_', ' ').title()
+            summary_para.add_run(f"• {section_title}:\n").bold = True
+            summary_para.add_run(f"  Logical Page: {data['logical_page']}\n")
+            summary_para.add_run(f"  Physical Page: {data['physical_page']}\n")
+            summary_para.add_run(f"  Tables Found: {len(data['tables'])}\n")
+            summary_para.add_run(f"  Text Length: {len(data['text_found'])} characters\n\n")
         
-        summary_df = pd.DataFrame(summary_data)
-        summary_df.to_excel(writer, sheet_name='Summary', index=False)
-        
-        # Save text content
-        text_data = []
+        # Add detailed sections
         for section_name, data in results.items():
-            text_data.append({
-                'Section': section_name.replace('_', ' ').title(),
-                'Page': data['page_number'],
-                'Extracted Text': data['text_found']
-            })
-        
-        text_df = pd.DataFrame(text_data)
-        text_df.to_excel(writer, sheet_name='Extracted Text', index=False)
-        
-        # Save all tables
-        table_counter = 1
-        for section_name, data in results.items():
-            for i, table in enumerate(data['tables']):
-                sheet_name = f"{section_name.split('_')[0].title()}_Table_{i+1}"
-                # Limit sheet name to 31 characters (Excel limit)
-                if len(sheet_name) > 31:
-                    sheet_name = f"Table_{table_counter}"
+            section_title = section_name.replace('_', ' ').title()
+            
+            # Section heading
+            doc.add_page_break()
+            doc.add_heading(f'{section_title} Section', level=1)
+            
+            # Page info
+            info_para = doc.add_paragraph()
+            info_para.add_run('Page Information:\n').bold = True
+            info_para.add_run(f"Logical Page: {data['logical_page']}\n")
+            info_para.add_run(f"Physical Page: {data['physical_page']}\n")
+            info_para.add_run(f"Tables Found: {len(data['tables'])}\n\n")
+            
+            # Extracted text
+            doc.add_heading('Extracted Text:', level=2)
+            text_para = doc.add_paragraph()
+            text_para.add_run(data['text_found'])
+            
+            # Tables (if any)
+            if data['tables']:
+                doc.add_heading('Extracted Tables:', level=2)
                 
-                table.to_excel(writer, sheet_name=sheet_name, index=False)
-                table_counter += 1
-    
-    print(f"✓ Results saved successfully!")
+                for i, table_df in enumerate(data['tables']):
+                    doc.add_heading(f'Table {i+1}', level=3)
+                    
+                    # Add table to Word document
+                    if not table_df.empty:
+                        # Create Word table
+                        word_table = doc.add_table(rows=1, cols=len(table_df.columns))
+                        word_table.style = 'Table Grid'
+                        
+                        # Add headers
+                        header_cells = word_table.rows[0].cells
+                        for j, column in enumerate(table_df.columns):
+                            header_cells[j].text = str(column)
+                            header_cells[j].paragraphs[0].runs[0].bold = True
+                        
+                        # Add data rows
+                        for index, row in table_df.iterrows():
+                            row_cells = word_table.add_row().cells
+                            for j, value in enumerate(row):
+                                row_cells[j].text = str(value)
+                        
+                        doc.add_paragraph()  # Add space after table
+            else:
+                doc.add_heading('No Tables Found', level=2)
+                doc.add_paragraph("No structured tables were detected on this page. All available text content is shown above.")
+        
+        # Save the document
+        doc.save(output_file)
+        print(f"✓ Word document saved successfully as: {output_file}")
+        print(f"✓ Word file location: {os.path.abspath(output_file)}")
+        
+        return output_file
+        
+    except ImportError:
+        print("✗ python-docx not installed. Install with: pip install python-docx")
+        return None
+    except Exception as e:
+        print(f"✗ Error saving Word document: {e}")
+        return None
 
 def search_for_section(pdf_path, section_type, total_pages):
     """
@@ -437,6 +479,10 @@ def main():
             print(f"Error analyzing PDF: {e}")
         
         return
+    
+    # Save to Word document
+    if results:
+        save_results_to_word(results)
     
     # Print simple summary
     print("\n" + "=" * 40)
