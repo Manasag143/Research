@@ -371,8 +371,19 @@ def main():
     Simple main function to run everything
     """
     
-    # Set your PDF path here
-    pdf_path = "your_pdf_file.pdf"  # Change this to your actual PDF path
+    # Set your PDF path here - CHANGE THIS TO YOUR ACTUAL PDF PATH
+    pdf_path = input("Enter the path to your PDF file: ").strip().strip('"').strip("'")
+    
+    # Alternative: uncomment and set your PDF path directly
+    # pdf_path = r"C:\path\to\your\pdf\file.pdf"  # Windows
+    # pdf_path = "/path/to/your/pdf/file.pdf"     # Mac/Linux
+    
+    if not pdf_path or not os.path.exists(pdf_path):
+        print("❌ PDF file not found. Please check the path.")
+        print("Example paths:")
+        print("  Windows: C:\\Documents\\your_file.pdf")
+        print("  Mac/Linux: /Users/username/Documents/your_file.pdf")
+        return
     
     print("PDF Contingent Liabilities Extractor")
     print("=" * 40)
