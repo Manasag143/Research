@@ -1,6 +1,9 @@
 import pandas as pd
 import pdfplumber
 import re
+from docx import Document
+from docx.shared import Inches
+import os
 
 def extract_contingent_liabilities_tables(pdf_path):
     """
@@ -350,7 +353,7 @@ def main():
                 print(f"    Table {i+1}: {table.shape[0]} rows × {table.shape[1]} columns")
         print()
     
-    print("Output file: contingent_liabilities_extracted.xlsx")
+    print("Output file: contingent_liabilities_extracted.docx")
     print("✓ All done!")
 
 # Run the extraction
