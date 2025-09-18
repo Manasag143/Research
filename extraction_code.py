@@ -1,6 +1,5 @@
 import pandas as pd
 import pdfplumber
-import tabula
 import re
 
 def extract_contingent_liabilities_tables(pdf_path):
@@ -99,47 +98,65 @@ def extract_contingent_liabilities_tables(pdf_path):
                     print(f"  ⚠ Contingent liabilities heading not found, using full page")
                     section_results['text_found'] = page_text
             
-            # Step 3: Extract tables using tabula
+            # Step 3: Extract tables using pdfplumber (no Java required)
             try:
-                print(f"  Extracting tables...")
-                tables = tabula.read_pdf(
-                    pdf_path, 
-                    pages=page_num,
-                    multiple_tables=True,
-                    pandas_options={'header': 0}
-                )
-                
-                for i, table in enumerate(tables):
-                    if not table.empty:
-                        # Simple cleaning
-                        cleaned_table = table.dropna(how='all').dropna(axis=1, how='all')
-                        cleaned_table = cleaned_table.fillna('')
-                        
-                        if not cleaned_table.empty:
-                            section_results['tables'].append(cleaned_table)
-                            print(f"  ✓ Extracted table {i+1}: {cleaned_table.shape}")
-                
-            except Exception as e:
-                print(f"  ⚠ Tabula failed: {e}")
-                
-                # Fallback: try pdfplumber
-                try:
-                    with pdfplumber.open(pdf_path) as pdf:
-                        page = pdf.pages[page_num - 1]
-                        page_tables = page.extract_tables()
-                        
+                print(f"  Extracting tables using pdfplumber...")
+                with pdfplumber.open(pdf_path) as pdf:
+                    page = pdf.pages[page_num - 1]
+                    page_tables = page.extract_tables()
+                    
+                    if page_tables:
                         for i, table_data in enumerate(page_tables):
-                            if table_data and len(table_data) > 1:
+                            if table_data and len(table_data) > 1:  # At least header + 1 row
+                                # Convert to DataFrame
                                 df = pd.DataFrame(table_data[1:], columns=table_data[0])
+                                
+                                # Simple cleaning
                                 df = df.dropna(how='all').dropna(axis=1, how='all')
                                 df = df.fillna('')
                                 
-                                if not df.empty:
+                                # Remove empty string columns and rows
+                                df = df.loc[:, (df != '').any(axis=0)]  # Remove empty columns
+                                df = df.loc[(df != '').any(axis=1)]     # Remove empty rows
+                                
+                                if not df.empty and df.shape[0] > 0 and df.shape[1] > 1:
                                     section_results['tables'].append(df)
-                                    print(f"  ✓ Extracted table {i+1} with pdfplumber: {df.shape}")
-                                    
-                except Exception as e2:
-                    print(f"  ✗ Both methods failed: {e2}")
+                                    print(f"  ✓ Extracted table {i+1}: {df.shape[0]} rows × {df.shape[1]} columns")
+                    else:
+                        print(f"  ⚠ No table structures found on this page")
+                        
+                        # Try alternative method - extract text and look for tabular data
+                        text_lines = page_text.split('\n')
+                        potential_table_lines = []
+                        
+                        for line in text_lines:
+                            # Look for lines that might be table rows (contain multiple numbers or currency)
+                            if (len(line.strip()) > 10 and 
+                                (line.count('₹') >= 2 or 
+                                 line.count('Rs.') >= 1 or
+                                 len([word for word in line.split() if word.replace(',', '').replace('.', '').isdigit()]) >= 2)):
+                                potential_table_lines.append(line.strip())
+                        
+                        if potential_table_lines:
+                            print(f"  ✓ Found {len(potential_table_lines)} potential table rows in text")
+                            
+                            # Create a simple table from text lines
+                            table_data = []
+                            for line in potential_table_lines[:10]:  # Limit to first 10 lines
+                                # Split by multiple spaces or tabs
+                                row = re.split(r'\s{2,}|\t', line)
+                                if len(row) >= 2:  # At least 2 columns
+                                    table_data.append(row)
+                            
+                            if table_data:
+                                df = pd.DataFrame(table_data)
+                                df.columns = [f'Column_{i+1}' for i in range(len(df.columns))]
+                                section_results['tables'].append(df)
+                                print(f"  ✓ Created table from text: {df.shape[0]} rows × {df.shape[1]} columns")
+                
+            except Exception as e:
+                print(f"  ✗ Table extraction failed: {e}")
+                print(f"  ℹ Continuing with text extraction only...")
             
             results[section_name] = section_results
             print(f"  Done: Found {len(section_results['tables'])} tables")
