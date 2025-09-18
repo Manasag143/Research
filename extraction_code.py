@@ -306,7 +306,7 @@ def extract_contingent_liabilities_tables(pdf_path):
 
 def save_results_to_word(results, output_file="contingent_liabilities_extracted.docx"):
     """
-    Save all results to a Word document
+    Save clean extracted text as tables in Word document
     
     Args:
         results (dict): Extraction results
@@ -321,73 +321,115 @@ def save_results_to_word(results, output_file="contingent_liabilities_extracted.
         doc = Document()
         
         # Add title
-        title = doc.add_heading('Contingent Liabilities Extraction Results', 0)
+        doc.add_heading('Contingent Liabilities Data', 0)
         
-        # Add summary
-        doc.add_heading('Summary', level=1)
-        summary_para = doc.add_paragraph()
-        
-        for section_name, data in results.items():
-            section_title = section_name.replace('_', ' ').title()
-            summary_para.add_run(f"• {section_title}:\n").bold = True
-            summary_para.add_run(f"  Logical Page: {data['logical_page']}\n")
-            summary_para.add_run(f"  Physical Page: {data['physical_page']}\n")
-            summary_para.add_run(f"  Tables Found: {len(data['tables'])}\n")
-            summary_para.add_run(f"  Text Length: {len(data['text_found'])} characters\n\n")
-        
-        # Add detailed sections
+        # Process each section
         for section_name, data in results.items():
             section_title = section_name.replace('_', ' ').title()
             
-            # Section heading
-            doc.add_page_break()
-            doc.add_heading(f'{section_title} Section', level=1)
+            # Add section heading
+            doc.add_heading(f'{section_title}', level=1)
+            doc.add_paragraph(f"Page {data['physical_page']} (Logical page {data['logical_page']})")
             
-            # Page info
-            info_para = doc.add_paragraph()
-            info_para.add_run('Page Information:\n').bold = True
-            info_para.add_run(f"Logical Page: {data['logical_page']}\n")
-            info_para.add_run(f"Physical Page: {data['physical_page']}\n")
-            info_para.add_run(f"Tables Found: {len(data['tables'])}\n\n")
+            # Clean and process the extracted text
+            text = data['text_found']
+            lines = text.split('\n')
             
-            # Extracted text
-            doc.add_heading('Extracted Text:', level=2)
-            text_para = doc.add_paragraph()
-            text_para.add_run(data['text_found'])
+            # Filter and clean lines for table
+            table_lines = []
+            found_total = False
             
-            # Tables (if any)
-            if data['tables']:
-                doc.add_heading('Extracted Tables:', level=2)
+            for line in lines:
+                line = line.strip()
                 
-                for i, table_df in enumerate(data['tables']):
-                    doc.add_heading(f'Table {i+1}', level=3)
+                # Skip empty lines and headers
+                if not line or len(line) < 5:
+                    continue
+                
+                # Skip section headers and notes
+                line_lower = line.lower()
+                if any(skip in line_lower for skip in 
+                      ['contingent', 'liabilit', 'statement', 'financial', 'note:', 'notes']):
+                    continue
+                
+                # Check for "total" line and stop after it
+                if 'total' in line_lower and (
+                    line.count('₹') >= 1 or 
+                    line.count('Rs.') >= 1 or 
+                    'crore' in line_lower or 
+                    'lakh' in line_lower or
+                    any(c.isdigit() for c in line)
+                ):
+                    table_lines.append(line)
+                    found_total = True
+                    print(f"  ✓ Found total line, stopping extraction: {line[:50]}...")
+                    break
+                
+                # Add lines that look like financial data
+                if (line.count('₹') >= 1 or 
+                    line.count('Rs.') >= 1 or
+                    'crore' in line_lower or
+                    'lakh' in line_lower or
+                    len([word for word in line.split() if word.replace(',', '').replace('.', '').replace('(', '').replace(')', '').isdigit()]) >= 1):
+                    table_lines.append(line)
+            
+            print(f"  ✓ Processed {len(table_lines)} data lines for {section_title}")
+            
+            # Create Word table from the lines
+            if table_lines:
+                # Parse lines into table structure
+                table_data = []
+                
+                for line in table_lines:
+                    # Split by multiple spaces (2 or more)
+                    columns = re.split(r'\s{2,}', line)
+                    # Clean up columns
+                    clean_columns = [col.strip() for col in columns if col.strip()]
                     
-                    # Add table to Word document
-                    if not table_df.empty:
-                        # Create Word table
-                        word_table = doc.add_table(rows=1, cols=len(table_df.columns))
-                        word_table.style = 'Table Grid'
-                        
-                        # Add headers
-                        header_cells = word_table.rows[0].cells
-                        for j, column in enumerate(table_df.columns):
-                            header_cells[j].text = str(column)
-                            header_cells[j].paragraphs[0].runs[0].bold = True
-                        
-                        # Add data rows
-                        for index, row in table_df.iterrows():
-                            row_cells = word_table.add_row().cells
-                            for j, value in enumerate(row):
-                                row_cells[j].text = str(value)
-                        
-                        doc.add_paragraph()  # Add space after table
+                    if len(clean_columns) >= 2:  # At least description + amount
+                        # Ensure we have consistent number of columns (pad to 3)
+                        while len(clean_columns) < 3:
+                            clean_columns.append('')
+                        # Take only first 3 columns to keep table clean
+                        table_data.append(clean_columns[:3])
+                
+                if table_data:
+                    # Create Word table
+                    word_table = doc.add_table(rows=1, cols=3)
+                    word_table.style = 'Table Grid'
+                    
+                    # Add headers
+                    header_cells = word_table.rows[0].cells
+                    header_cells[0].text = 'Description'
+                    header_cells[1].text = 'Current Year'
+                    header_cells[2].text = 'Previous Year'
+                    
+                    # Make headers bold
+                    for cell in header_cells:
+                        for paragraph in cell.paragraphs:
+                            for run in paragraph.runs:
+                                run.bold = True
+                    
+                    # Add data rows
+                    for row_data in table_data:
+                        row_cells = word_table.add_row().cells
+                        for i, value in enumerate(row_data):
+                            if i < 3:  # Only fill 3 columns
+                                row_cells[i].text = str(value)
+                    
+                    doc.add_paragraph()  # Add space after table
+                    print(f"  ✓ Created table with {len(table_data)} rows for {section_title}")
+                
             else:
-                doc.add_heading('No Tables Found', level=2)
-                doc.add_paragraph("No structured tables were detected on this page. All available text content is shown above.")
+                doc.add_paragraph("No financial data found in the expected format.")
+            
+            # Add page break between sections
+            if section_name != list(results.keys())[-1]:  # Not the last section
+                doc.add_page_break()
         
         # Save the document
         doc.save(output_file)
-        print(f"✓ Word document saved successfully as: {output_file}")
+        print(f"✓ Clean Word document saved successfully as: {output_file}")
         print(f"✓ Word file location: {os.path.abspath(output_file)}")
         
         return output_file
