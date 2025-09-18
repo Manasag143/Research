@@ -327,111 +327,126 @@ def save_results_to_word(results, output_file="contingent_liabilities_extracted.
         for section_name, data in results.items():
             section_title = section_name.replace('_', ' ').title()
             
+            print(f"Processing {section_title} for Word document...")
+            
             # Add section heading
             doc.add_heading(f'{section_title}', level=1)
             doc.add_paragraph(f"Page {data['physical_page']} (Logical page {data['logical_page']})")
             
-            # Clean and process the extracted text
+            # Get the extracted text
             text = data['text_found']
+            
+            if not text:
+                doc.add_paragraph("No text was extracted for this section.")
+                print(f"  ⚠ No text found for {section_title}")
+                continue
+            
+            print(f"  Text length: {len(text)} characters")
+            
+            # First, add the raw extracted text for debugging
+            doc.add_heading('Extracted Text:', level=2)
+            doc.add_paragraph(text)
+            
+            # Now try to create table from the text
+            doc.add_heading('Processed Table:', level=2)
+            
             lines = text.split('\n')
+            print(f"  Total lines: {len(lines)}")
             
-            # Filter and clean lines for table
+            # Less restrictive filtering - keep more lines
             table_lines = []
-            found_total = False
             
-            for line in lines:
+            for i, line in enumerate(lines):
                 line = line.strip()
                 
-                # Skip empty lines and headers
-                if not line or len(line) < 5:
+                # Skip completely empty lines
+                if not line:
                     continue
                 
-                # Skip section headers and notes
-                line_lower = line.lower()
-                if any(skip in line_lower for skip in 
-                      ['contingent', 'liabilit', 'statement', 'financial', 'note:', 'notes']):
-                    continue
+                print(f"  Line {i+1}: {line[:80]}...")  # Debug print
                 
-                # Check for "total" line and stop after it
-                if 'total' in line_lower and (
-                    line.count('₹') >= 1 or 
-                    line.count('Rs.') >= 1 or 
-                    'crore' in line_lower or 
-                    'lakh' in line_lower or
-                    any(c.isdigit() for c in line)
-                ):
+                # Less restrictive - keep lines that might have financial data
+                # Look for any line with numbers, currency, or financial terms
+                has_financial_data = (
+                    any(char.isdigit() for char in line) or  # Has numbers
+                    '₹' in line or 'Rs.' in line or 'rs.' in line.lower() or  # Currency
+                    'crore' in line.lower() or 'lakh' in line.lower() or  # Amount terms
+                    'million' in line.lower() or  # Amount terms
+                    len(line) > 10  # Not too short
+                )
+                
+                # Skip obvious headers but be less restrictive
+                is_header = any(header in line.lower() for header in 
+                              ['contingent liabilities', 'notes to', 'financial statement'])
+                
+                if has_financial_data and not is_header:
                     table_lines.append(line)
-                    found_total = True
-                    print(f"  ✓ Found total line, stopping extraction: {line[:50]}...")
+                    print(f"    ✓ Keeping line: {line}")
+                
+                # Stop at total but continue to show what we found
+                if 'total' in line.lower() and has_financial_data:
+                    print(f"    ✓ Found total line: {line}")
                     break
-                
-                # Add lines that look like financial data
-                if (line.count('₹') >= 1 or 
-                    line.count('Rs.') >= 1 or
-                    'crore' in line_lower or
-                    'lakh' in line_lower or
-                    len([word for word in line.split() if word.replace(',', '').replace('.', '').replace('(', '').replace(')', '').isdigit()]) >= 1):
-                    table_lines.append(line)
             
-            print(f"  ✓ Processed {len(table_lines)} data lines for {section_title}")
+            print(f"  ✓ Found {len(table_lines)} potential data lines")
             
-            # Create Word table from the lines
+            # Create table if we have data
             if table_lines:
-                # Parse lines into table structure
+                # Simple table creation
                 table_data = []
                 
                 for line in table_lines:
-                    # Split by multiple spaces (2 or more)
-                    columns = re.split(r'\s{2,}', line)
-                    # Clean up columns
+                    # Try different splitting methods
+                    columns = re.split(r'\s{2,}', line)  # Split by 2+ spaces
+                    
+                    # Clean columns
                     clean_columns = [col.strip() for col in columns if col.strip()]
                     
-                    if len(clean_columns) >= 2:  # At least description + amount
-                        # Ensure we have consistent number of columns (pad to 3)
+                    if clean_columns:  # If we have any columns
+                        # Pad to 3 columns
                         while len(clean_columns) < 3:
                             clean_columns.append('')
-                        # Take only first 3 columns to keep table clean
-                        table_data.append(clean_columns[:3])
+                        
+                        table_data.append(clean_columns[:3])  # Take first 3
                 
                 if table_data:
                     # Create Word table
                     word_table = doc.add_table(rows=1, cols=3)
                     word_table.style = 'Table Grid'
                     
-                    # Add headers
+                    # Headers
+                    headers = ['Description', 'Amount 1', 'Amount 2']
                     header_cells = word_table.rows[0].cells
-                    header_cells[0].text = 'Description'
-                    header_cells[1].text = 'Current Year'
-                    header_cells[2].text = 'Previous Year'
-                    
-                    # Make headers bold
-                    for cell in header_cells:
-                        for paragraph in cell.paragraphs:
+                    for i, header in enumerate(headers):
+                        header_cells[i].text = header
+                        for paragraph in header_cells[i].paragraphs:
                             for run in paragraph.runs:
                                 run.bold = True
                     
-                    # Add data rows
+                    # Add data
                     for row_data in table_data:
                         row_cells = word_table.add_row().cells
                         for i, value in enumerate(row_data):
-                            if i < 3:  # Only fill 3 columns
-                                row_cells[i].text = str(value)
+                            row_cells[i].text = str(value)
                     
-                    doc.add_paragraph()  # Add space after table
-                    print(f"  ✓ Created table with {len(table_data)} rows for {section_title}")
+                    doc.add_paragraph()
+                    print(f"  ✓ Created table with {len(table_data)} rows")
                 
+                else:
+                    doc.add_paragraph("Could not parse the data into table format.")
+                    print(f"  ⚠ Could not create table structure")
+            
             else:
-                doc.add_paragraph("No financial data found in the expected format.")
+                doc.add_paragraph("No financial data lines found in the extracted text.")
+                print(f"  ⚠ No financial data lines found")
             
             # Add page break between sections
-            if section_name != list(results.keys())[-1]:  # Not the last section
+            if section_name != list(results.keys())[-1]:
                 doc.add_page_break()
         
-        # Save the document
+        # Save
         doc.save(output_file)
-        print(f"✓ Clean Word document saved successfully as: {output_file}")
-        print(f"✓ Word file location: {os.path.abspath(output_file)}")
-        
+        print(f"✓ Word document saved: {output_file}")
         return output_file
         
     except ImportError:
